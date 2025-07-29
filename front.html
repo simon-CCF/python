@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<meta charset="UTF-8">
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8" />
+  <title>病人角度監控</title>
+  <style>
+    #needle {
+      width: 4px;
+      height: 100px;
+      background: red;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform-origin: bottom center;
+      transition: transform 0.1s ease;
+    }
+    #container {
+      position: relative;
+      width: 200px;
+      height: 200px;
+      margin: 20px auto;
+      border: 2px solid black;
+      border-radius: 50%;
+    }
+    .patient-card {
+      margin: 5px 0;
+      padding: 10px;
+      border: 1px solid #aaa;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .patient-info {
+      flex-grow: 1;
+    }
+    button {
+      margin-left: 10px;
+      padding: 4px 10px;
+      cursor: pointer;
+    }
+    button.delete-btn {
+      color: red;
+      border: 1px solid red;
+      background: none;
+    }
+  </style>
+</head>
+<body>
+
+<h2>復健角度即時監控</h2>
+
+<!-- 新增病人 -->
+<h3>新增病人</h3>
+<input type="text" id="nameInput" placeholder="姓名" />
+<input type="email" id="emailInput" placeholder="Email" />
+<button onclick="addPatient()">新增病人</button>
+
+<!-- 病人清單 -->
+<h3>病人列表</h3>
+<div id="patientList"></div>
+
+<!-- 即時角度畫面 -->
+<div id="container">
+  <div id="needle"></div>
+</div>
+<div id="info" style="text-align:center; margin-top:10px;"></div>
+
+<script>
+  let ws = null;
+  const patients = [];
+
+  async function addPatient() {
+    const name = document.getElementById('nameInput').value.trim();
+    const email = document.getElementById('emailInput').value.trim();
+
+    if (!name || !email) {
+      alert('請輸入姓名與 Email');
+      return;
+    }
+
+    try {
+      const response = await fetch("http://localhost:8001/register/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email })
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        alert(`註冊失敗: ${err}`);
+        return;
+      }
+
+      const data = await response.json();
+      console.log("資料表已建立:", data.table_name);
+
+      // 加入前端病人清單 (避免重複)
+      if (!patients.some(p => p.email === email)) {
+        patients.push({ name, email });
+        renderPatientList();
+      }
+
+      // 清空輸入欄位
+      document.getElementById('nameInput').value = '';
+      document.getElementById('emailInput').value = '';
+
+    } catch (err) {
+      alert(`無法與後端通訊: ${err}`);
+    }
+  }
+
+  function renderPatientList() {
+    const list = document.getElementById('patientList');
+    list.innerHTML = '';
+    patients.forEach((p, index) => {
+      const div = document.createElement('div');
+      div.className = 'patient-card';
+      div.innerHTML = `
+        <div class="patient-info"><strong>${p.name}</strong> (${p.email})</div>
+        <div>
+          <button onclick="connectToPatient('${p.email}')">觀看即時角度</button>
+          <button class="delete-btn" onclick="deletePatient(${index})">刪除此病人</button>
+        </div>
+      `;
+      list.appendChild(div);
+    });
+  }
+
+  function connectToPatient(email) {
+    if (ws) ws.close();
+    ws = new WebSocket(`ws://localhost:8001/ws/${encodeURIComponent(email)}`);
+
+    ws.onopen = () => {
+      console.log(`已連線病人: ${email}`);
+      document.getElementById("info").innerText = `監控病人: ${email}，等待資料中...`;
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.angle_deg !== undefined) {
+        document.getElementById("needle").style.transform = `rotate(${data.angle_deg}deg)`;
+        document.getElementById("info").innerText =
+          `病人: ${email} 角度: ${data.angle_deg}°, 序號: ${data.seq}, HEX: ${data.hex}`;
+      } else if (data.error) {
+        alert(data.error);
+      }
+    };
+
+    ws.onclose = () => {
+      console.log("WebSocket 已關閉");
+      document.getElementById("info").innerText = "WebSocket 連線已斷開";
+    };
+
+    ws.onerror = (err) => {
+      console.error("WebSocket 錯誤", err);
+      document.getElementById("info").innerText = "WebSocket 發生錯誤";
+    };
+  }
+
+  async function deletePatient(index) {
+    const patient = patients[index];
+    if (!confirm(`確定要刪除病人 ${patient.name} 及其資料表嗎？此動作無法復原。`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:8001/patient/${encodeURIComponent(patient.email)}`, {
+        method: 'DELETE'
+      });
+
+      if (!response.ok) {
+        const err = await response.text();
+        alert(`刪除失敗: ${err}`);
+        return;
+      }
+
+      alert(`已刪除病人 ${patient.name} 的資料`);
+
+      // 如果正在監控這個病人，先關閉 WebSocket 連線
+      if (ws) ws.close();
+
+      patients.splice(index, 1);
+      renderPatientList();
+
+      // 清空指針和訊息
+      document.getElementById("needle").style.transform = `rotate(0deg)`;
+      document.getElementById("info").innerText = '';
+
+    } catch (err) {
+      alert(`無法與後端通訊: ${err}`);
+    }
+  }
+</script>
+
+</body>
+</html>
