@@ -1,5 +1,4 @@
 <!DOCTYPE html>
-<meta charset="UTF-8">
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8" />
@@ -66,9 +65,13 @@
 </div>
 <div id="info" style="text-align:center; margin-top:10px;"></div>
 
+<!-- 引入 js-md5 -->
+<script src="https://cdn.jsdelivr.net/npm/js-md5@0.7.3/src/md5.min.js"></script>
+
 <script>
   let ws = null;
   const patients = [];
+  let pingInterval = null;
 
   async function addPatient() {
     const name = document.getElementById('nameInput').value.trim();
@@ -95,13 +98,11 @@
       const data = await response.json();
       console.log("資料表已建立:", data.table_name);
 
-      // 加入前端病人清單 (避免重複)
       if (!patients.some(p => p.email === email)) {
         patients.push({ name, email });
         renderPatientList();
       }
 
-      // 清空輸入欄位
       document.getElementById('nameInput').value = '';
       document.getElementById('emailInput').value = '';
 
@@ -128,20 +129,44 @@
   }
 
   function connectToPatient(email) {
-    if (ws) ws.close();
-    ws = new WebSocket(`ws://localhost:8001/ws/${encodeURIComponent(email)}`);
+    if (ws) {
+      ws.close();
+      clearInterval(pingInterval);
+    }
+
+    const emailHash = md5(email);
+    const channel = `sensor_${emailHash}`;
+
+    ws = new WebSocket(`ws://localhost:8002/ws/${encodeURIComponent(channel)}`);
 
     ws.onopen = () => {
-      console.log(`已連線病人: ${email}`);
+      console.log(`已連線病人: ${email} (頻道: ${channel})`);
       document.getElementById("info").innerText = `監控病人: ${email}，等待資料中...`;
+
+      pingInterval = setInterval(() => {
+        console.log("WebSocket ping...");
+        if (ws.readyState !== WebSocket.OPEN) {
+          clearInterval(pingInterval);
+        }
+      }, 10000);
     };
 
     ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
+      let data;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        // 若資料不是 JSON，直接顯示原始文字
+        document.getElementById("info").innerText = `收到資料: ${event.data}`;
+        return;
+      }
+
       if (data.angle_deg !== undefined) {
         document.getElementById("needle").style.transform = `rotate(${data.angle_deg}deg)`;
         document.getElementById("info").innerText =
           `病人: ${email} 角度: ${data.angle_deg}°, 序號: ${data.seq}, HEX: ${data.hex}`;
+      } else if (data.status === "connected") {
+        document.getElementById("info").innerText = `已連接，等待新資料... (start_id=${data.start_id})`;
       } else if (data.error) {
         alert(data.error);
       }
@@ -150,6 +175,8 @@
     ws.onclose = () => {
       console.log("WebSocket 已關閉");
       document.getElementById("info").innerText = "WebSocket 連線已斷開";
+      clearInterval(pingInterval);
+      // 先不要自動重連，避免無限重連
     };
 
     ws.onerror = (err) => {
@@ -176,14 +203,12 @@
       }
 
       alert(`已刪除病人 ${patient.name} 的資料`);
-
-      // 如果正在監控這個病人，先關閉 WebSocket 連線
       if (ws) ws.close();
+      clearInterval(pingInterval);
 
       patients.splice(index, 1);
       renderPatientList();
 
-      // 清空指針和訊息
       document.getElementById("needle").style.transform = `rotate(0deg)`;
       document.getElementById("info").innerText = '';
 

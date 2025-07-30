@@ -5,6 +5,7 @@ from sqlalchemy import create_engine, MetaData, Table, Column, Integer, LargeBin
 from sqlalchemy.orm import sessionmaker
 from functools import lru_cache
 import hashlib
+import redis  # 新增同步 redis 客戶端
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -21,6 +22,9 @@ SessionLocal = sessionmaker(bind=engine)
 metadata = MetaData()
 
 inspector = inspect(engine)
+
+# 初始化 redis 同步客戶端
+redis_client = redis.Redis(host='localhost', port=6379, db=0)
 
 def email_to_table_name(email: str) -> str:
     hashed = hashlib.md5(email.encode()).hexdigest()
@@ -62,10 +66,13 @@ def process_sensor_data(log_data):
         session.commit()
         logger.info(f"✅ Data written to {table_name}")
 
+        # 寫入成功後 publish 到 redis 頻道
+        channel = f"sensor_{hashlib.md5(email.encode('utf-8')).hexdigest()}"
+        data_to_send = data_bytes.hex()
+        redis_client.publish(channel, data_to_send)
+
     except Exception as e:
         session.rollback()
         logger.error(f"❌ Exception: {e}")
     finally:
         session.close()
-
-
