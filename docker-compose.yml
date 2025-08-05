@@ -1,0 +1,45 @@
+version: "3.9"
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "PING"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  fastapi_a:
+    build: .
+    container_name: fastapi_a
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8001:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  fastapi_b:
+    build: .
+    container_name: fastapi_b
+    command: ["uvicorn", "websocket2:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8002:8000"
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  celery_worker:
+    build: .
+    container_name: celery_worker
+    command: ["celery", "-A", "celery_app.celery_app", "worker", "--loglevel=info"]
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - redis

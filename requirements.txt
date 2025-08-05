@@ -1,0 +1,10 @@
+uvicorn[standard]
+redis
+celery[redis]
+pandas
+numpy
+fastapi[all]
+httpx 
+sqlalchemy 
+pymysql 
+websockets
