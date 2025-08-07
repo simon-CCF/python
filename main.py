@@ -169,3 +169,4 @@ async def receive_data(request: Request):
 
     return {"status": "Task sent to Celery"}
 
+# ...

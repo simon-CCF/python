@@ -239,3 +239,4 @@ async def websocket_endpoint(websocket: WebSocket, channel: str):
         print(f"取消訂閱 Redis 頻道 {channel}")
         await pubsub.unsubscribe(channel)
         await pubsub.close()
+# ..
